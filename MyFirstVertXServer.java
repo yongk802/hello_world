@@ -1,5 +1,8 @@
 package vertx_testing;
 
+import java.io.File;
+import java.net.InetSocketAddress;
+
 import org.vertx.java.core.AsyncResult;
 import org.vertx.java.core.AsyncResultHandler;
 import org.vertx.java.core.Handler;
@@ -28,13 +31,14 @@ public class MyFirstVertXServer extends Verticle {
 	 * by using this as your main rather than implementing start()
 	public static void main(String[] args) throws Exception {
 		Vertx vertx = VertxFactory.newVertx();
-	*/
-	
+	 */
+
 	public void start() {
 		HttpServer server = vertx.createHttpServer();
 		RouteMatcher routeMatcher = new RouteMatcher();
 		final Logger logger = container.logger();
 		final EventBus eb = vertx.eventBus();
+		final JsonObject obj = new JsonObject();
 
 		// add special handling for certain request URLs
 		routeMatcher.get("/animals/dogs", new Handler<HttpServerRequest>() {
@@ -66,7 +70,7 @@ public class MyFirstVertXServer extends Verticle {
 						"<a href=\"animals/cats\">Mystery Link One</a></br>" +
 						"<a href=\"animals/dogs\">Mystery Link Two</a></br>" +
 						"<form>Search: <input type=\"search\" name=\"search\"></form>" +
-						"<div><p>Try searching for a string that contains \"magic\" and magical things will happen in the background!</p></div>" +
+						"<div><p>Try searching for a string that contains \"magic\" and you will win a prize for being the first!</p></div>" +
 						"</div>" +
 						"<div class=\"vid\">" +
 						"<h3>Patty Buehler Speaking on Business Development in Sydney</h3>" + 
@@ -75,44 +79,54 @@ public class MyFirstVertXServer extends Verticle {
 						"</body>" +
 						"</html>");
 				// 
-				if(req.query() != null && req.query().contains("magic"))
+				if(req.query() != null && req.query().contains("magic") && obj.getString("magicTerm") == null)
 				{
 					System.out.println("Magical Logging!");
-					vertXLogAndNotify(req.query(), logger, eb);
+					vertXLogAndNotify(req.query(), logger, req.localAddress(), eb, obj);
 				}
 			}
 		});server.requestHandler(routeMatcher).listen(1234, "localhost");
 	}
-	
-	
-	private void vertXLogAndNotify(final String query, Logger logger, final EventBus eb) 
+
+
+	private void vertXLogAndNotify(final String query, Logger logger, final InetSocketAddress inetSocketAddress, final EventBus eb, final JsonObject obj) 
 	{
-		logger.info(query);
+		// should log every query containing "magic"
+		logger.info("magic query detected: " + query);
+		// delete the file if it exists - should only happen the first time a verticle is launched and a "magic" term is detected
+		File jsonLog = new File("files/foo.json");
+		if(jsonLog.exists())
+		{
+			vertx.fileSystem().deleteSync("files/foo.json", true);
+		}
 		vertx.fileSystem().open("files/foo.json", new AsyncResultHandler<AsyncFile>() {
 			public void handle(AsyncResult<AsyncFile> ar) {
 				if (ar.succeeded()) {
-					AsyncFile asyncFile = ar.result();
-					JsonObject obj = new JsonObject();
-					obj.putString("key", query);
+					final AsyncFile asyncFile = ar.result();
+					// will only log the first query containing "magic"
+					obj.putString("magicTerm", query.replaceAll("^search=", ""));
+					obj.putString("requesterAddress", inetSocketAddress.toString().substring(1, inetSocketAddress.toString().length()));
 					Buffer buff = new Buffer(obj.toString(),"UTF-8");
+					System.out.println(obj.toString());
 					asyncFile.write(buff, Integer.valueOf(buff.length()).longValue(), new AsyncResultHandler<Void>() {
 						public void handle(AsyncResult<Void> ar) {
 							if (ar.succeeded()) {
 								System.out.println("Written ok! Sending a message using EventBus API!");
 								@SuppressWarnings("rawtypes")
 								Handler<Message> myHandler = new Handler<Message>() {
-								    public void handle(Message message) {
-								        System.out.println("I received a magical message! " + query);
-								    }
+									public void handle(Message message) {
+										System.out.println("I received a magical message! " + query);
+									}
 								};
 								eb.registerHandler("my.address", myHandler, new AsyncResultHandler<Void>() {
-								    public void handle(AsyncResult<Void> asyncResult) {
-								        System.out.println("The handler has been registered across the cluster ok? " + asyncResult.succeeded());
-								    }
+									public void handle(AsyncResult<Void> asyncResult) {
+										System.out.println("The handler has been registered across the cluster ok? " + asyncResult.succeeded());
+									}
 								});
 							} else {
 								System.out.println("Failed to write" + ar.cause());
 							}
+							asyncFile.close();
 						}
 					});
 				} else {
